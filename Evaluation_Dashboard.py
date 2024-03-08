@@ -44,4 +44,16 @@ with placeholder.container():
     # create three columns
     st.dataframe(concise_df, use_container_width=True)
 
+    column_content, column_rules, column_combat, column_other = st.columns(4)
+
+    with column_content:
+        st.markdown("")
+    with column_rules:
+        st.markdown("")
+    with column_combat:
+        st.markdown("")
+    with column_other:
+        st.markdown("")
+
     hyperparameter = st.selectbox("Select a hyperparameter", df.columns[1:6])
+
