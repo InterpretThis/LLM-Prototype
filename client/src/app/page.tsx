@@ -1,8 +1,8 @@
 "use client";
 
-import { fetchJson } from "@/client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { MessageProvider, useMessageContext } from "@/app/message-context";
+import { chain } from "@/client";
 
 export default function Home() {
   return (
@@ -12,30 +12,35 @@ export default function Home() {
   );
 }
 
+function isAnswer(chunk: unknown): chunk is { answer: string } {
+  return typeof chunk === "object" && chunk !== null && "answer" in chunk;
+}
+
 function Main() {
-  const { addMessage } = useMessageContext();
+  const { createMessage, appendToMessage } = useMessageContext();
+
+  const messagesRef = useRef<HTMLDivElement>(null);
 
   async function handleSubmit(query: string) {
-    addMessage({
-      author: "You",
-      text: query,
-    });
+    if (query.trim() === "") {
+      return;
+    }
 
-    const formData = new FormData();
+    createMessage("You", query);
 
-    formData.append("query", query);
+    messagesRef.current?.scrollIntoView({ behavior: "smooth" });
 
-    const json = await fetchJson("/query", {
-      method: "POST",
-      body: formData,
-    });
+    const id = createMessage("ChatDND");
 
-    const response = (json as { response: string }).response;
+    const stream = await chain.stream(query);
 
-    addMessage({
-      author: "ChatDND",
-      text: response,
-    });
+    for await (const chunk of stream) {
+      if (isAnswer(chunk)) {
+        appendToMessage(id, chunk.answer);
+      }
+    }
+
+    messagesRef.current?.scrollIntoView({ behavior: "smooth" });
   }
 
   return (
@@ -50,7 +55,10 @@ function Main() {
               <div className="absolute left-0 right-0">
                 <div className="h-1.5"></div>
               </div>
-              <div className="flex h-full flex-col items-center">
+              <div
+                className="flex h-full flex-col items-center overflow-y-scroll"
+                ref={messagesRef}
+              >
                 <Messages />
               </div>
             </div>
@@ -84,13 +92,17 @@ function Messages() {
       {messages.map((message) => (
         <div key={message.id} className="w-full">
           <div className="px-4 py-2 justify-center text-base md:gap-6 m-auto">
-            <div className="relative flex w-full flex-col">
+            <div className="relative flex w-full flex-col gap-2">
               <div className="font-semibold select-none">{message.author}</div>
               <div className="flex-col gap-1 md:gap-3">
                 <div className="flex flex-grow flex-col max-w-full">
                   <div className="flex flex-col items-start gap-3 whitespace-pre-wrap break-words overflow-x-auto">
                     <div className="w-full break-words">
-                      <p>{message.text}</p>
+                      {message.text === "" ? (
+                        <LoadingMessage />
+                      ) : (
+                        <p>{message.text.trim()}</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -100,6 +112,16 @@ function Messages() {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function LoadingMessage() {
+  return (
+    <div className="animate-pulse flex-1 space-y-3 py-1">
+      <div className="h-2 bg-slate-200 rounded"></div>
+      <div className="h-2 bg-slate-200 rounded"></div>
+      <div className="h-2 bg-slate-200 rounded"></div>
     </div>
   );
 }

@@ -1,8 +1,6 @@
 """
-A demonstration of retrieval-augmented generation with LangChain.
+Retrieval-augmented generation with LangChain.
 """
-
-from time import time
 
 from langchain_community.document_loaders.pdf import PyPDFLoader
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -69,9 +67,9 @@ def format_docs(docs: list[Document]):
     return "\n\n".join(doc.page_content for doc in docs)
 
 
-def setup():
+def create_rag_chain():
     """
-    Instantiate the retrieval-augmented generation (RAG) chain.
+    Create the retrieval-augmented generation (RAG) chain.
     """
 
     vectorstore = create_vectorstore()
@@ -80,7 +78,7 @@ def setup():
     retriever = vectorstore.as_retriever(search_type="similarity")
 
     print("Creating LLM...")
-    llm = Llamafile()
+    llm = Llamafile(streaming=True)
 
     prompt_template = ChatPromptTemplate.from_template(
         """You are an assistant for a Dungeons and Dragons (DnD) game.
@@ -106,25 +104,3 @@ def setup():
     return RunnableParallel(
         {"context": retriever, "question": RunnablePassthrough()}
     ).assign(answer=rag_chain_from_docs)
-
-
-if __name__ == "__main__":
-    rag_chain = setup()
-
-    while True:
-        prompt = input("Prompt: ")
-
-        start = time()
-        response = rag_chain.invoke(prompt)
-
-        context: list[Document] = response["context"]
-        metadata = [document.metadata for document in context]
-
-        print("Context:")
-        for meta in metadata:
-            print(f"    {meta}")
-        print()
-
-        print(f"Answer: {response['answer']}\n")
-
-        print(f"Time: {time() - start:2f}s\n")
