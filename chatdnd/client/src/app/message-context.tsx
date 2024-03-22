@@ -12,6 +12,7 @@ export interface Message {
 
 export interface MessageContext {
   messages: Message[];
+  chatHistory: [string, string][];
   createMessage: (author: Author, text?: string) => string;
   appendToMessage: (id: string, text: string) => void;
 }
@@ -46,9 +47,17 @@ export function MessageProvider({ children }: { children: React.ReactNode }) {
     );
   };
 
+  const chatHistory = messages.reduce(
+    (acc, item, i, _messages) =>
+      acc.concat(
+        _messages.slice(i + 1).map((_item) => [item.text, _item.text])
+      ),
+    [] as [string, string][]
+  );
+
   return (
     <MessageContext.Provider
-      value={{ messages, createMessage, appendToMessage }}
+      value={{ messages, chatHistory, createMessage, appendToMessage }}
     >
       {children}
     </MessageContext.Provider>

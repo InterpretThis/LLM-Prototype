@@ -23,7 +23,7 @@ function isAnswer(chunk: unknown): chunk is { answer: string } {
 }
 
 function Main() {
-  const { createMessage, appendToMessage } = useMessageContext();
+  const { chatHistory, createMessage, appendToMessage } = useMessageContext();
 
   const messagesRef = useRef<HTMLDivElement>(null);
 
@@ -38,7 +38,7 @@ function Main() {
 
     const id = createMessage("ChatDND");
 
-    // const stream = await chain.stream({ question });
+    // const stream = await chain.stream({ question, chat_history: chatHistory });
     const stream = await chain.stream(question);
 
     for await (const chunk of stream) {

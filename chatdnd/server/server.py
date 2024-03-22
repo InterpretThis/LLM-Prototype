@@ -235,6 +235,7 @@ def create_rag_chain_with_chat_history():
     print("Creating LLM...")
     llm = create_llm("llamafile", callback_manager)
 
+    print("Creating RAG chain...")
     _search_query = RunnableBranch(
         (
             RunnableLambda(lambda x: bool(x.get("chat_history"))).with_config(
