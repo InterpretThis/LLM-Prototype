@@ -2,6 +2,7 @@
 Flask server for retrieval-augmented generation with LangChain.
 """
 
+from operator import itemgetter
 from subprocess import Popen
 from sys import executable, stderr, stdout
 from typing import Literal
@@ -16,9 +17,21 @@ from langchain_community.llms.llamacpp import LlamaCpp
 from langchain_community.llms.llamafile import Llamafile
 from langchain_community.vectorstores.faiss import FAISS
 from langchain_core.documents import Document
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnableParallel, RunnablePassthrough
+from langchain_core.prompts import (
+    ChatPromptTemplate,
+    MessagesPlaceholder,
+    format_document,
+)
+from langchain_core.prompts.prompt import PromptTemplate
+from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain_core.runnables import (
+    RunnableBranch,
+    RunnableLambda,
+    RunnableParallel,
+    RunnablePassthrough,
+)
 from langchain_text_splitters import CharacterTextSplitter
 from langserve import add_routes
 
@@ -44,8 +57,8 @@ def create_llm(
         )
 
     if model_type == "llamafile":
-        name = "llamafile/llava-v1.5-7b-q4.llamafile"
-        # name = "llamafile/mistral-7b-instruct-v0.2.Q5_K_M.llamafile"
+        # name = "llamafile/llava-v1.5-7b-q4.llamafile"
+        name = "llamafile/mistral-7b-instruct-v0.2.Q5_K_M.llamafile"
         # name = "llamafile/TinyLlama-1.1B-Chat-v1.0.Q5_K_M.llamafile"
 
         Popen(
@@ -101,8 +114,6 @@ def create_vectorstore():
     Create a vector-store from the PDF documents.
     """
 
-    print("Creating vector-store...")
-
     return FAISS.from_documents(
         CharacterTextSplitter(chunk_size=512, chunk_overlap=128).split_documents(
             load_documents()
@@ -124,6 +135,7 @@ def create_rag_chain():
     Create the retrieval-augmented generation (RAG) chain.
     """
 
+    print("Creating vector-store...")
     vectorstore = create_vectorstore()
 
     print("Creating retriever...")
@@ -161,6 +173,94 @@ def create_rag_chain():
     ).assign(answer=rag_chain_from_docs)
 
 
+def create_rag_chain_with_chat_history():
+    """
+    Create the retrieval-augmented generation (RAG) chain with chat history.
+    """
+
+    _template = """Given the following conversation and a follow up question, \
+    rephrase the follow up question to be a standalone question, in its original language.
+    Chat History:
+    {chat_history}
+    Follow Up Input: {question}
+    Standalone question:"""  # noqa: E501
+
+    condense_question_prompt = PromptTemplate.from_template(_template)
+
+    template = """Answer the question based only on the following context:
+    <context>
+    {context}
+    </context>"""
+
+    answer_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", template),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("user", "{question}"),
+        ]
+    )
+
+    default_document_prompt = PromptTemplate.from_template(template="{page_content}")
+
+    def _combine_documents(
+        docs, document_prompt=default_document_prompt, document_separator="\n\n"
+    ):
+        doc_strings = [format_document(doc, document_prompt) for doc in docs]
+        return document_separator.join(doc_strings)
+
+    def _format_chat_history(chat_history: list[tuple[str, str]]) -> list:
+        buffer = []
+        for human, ai in chat_history:
+            buffer.append(HumanMessage(content=human))
+            buffer.append(AIMessage(content=ai))
+        return buffer
+
+    class ChatHistory(BaseModel):
+        """Chat history."""
+
+        chat_history: list[tuple[str, str]] = Field(
+            ..., extra={"widget": {"type": "chat"}}
+        )
+        question: str
+
+    print("Creating vectorstore...")
+    vectorstore = create_vectorstore()
+
+    print("Creating retriever...")
+    retriever = vectorstore.as_retriever(search_type="similarity")
+
+    print("Creating LLM callback manager...")
+    callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
+
+    print("Creating LLM...")
+    llm = create_llm("llamafile", callback_manager)
+
+    _search_query = RunnableBranch(
+        (
+            RunnableLambda(lambda x: bool(x.get("chat_history"))).with_config(
+                run_name="HasChatHistoryCheck"
+            ),
+            RunnablePassthrough.assign(
+                chat_history=lambda x: _format_chat_history(x["chat_history"])
+            )
+            | condense_question_prompt
+            | llm
+            | StrOutputParser(),
+        ),
+        RunnableLambda(itemgetter("question")),
+    )
+
+    _inputs = RunnableParallel(
+        {
+            "question": lambda x: x["question"],
+            "chat_history": lambda x: _format_chat_history(x["chat_history"]),
+            "context": _search_query | retriever | _combine_documents,
+        }
+    ).with_types(input_type=ChatHistory)
+
+    return _inputs | answer_prompt | llm | StrOutputParser()
+
+
 app = FastAPI()
 
 
@@ -174,6 +274,7 @@ app.add_middleware(
 )
 
 chain = create_rag_chain()
+# chain = create_rag_chain_with_chat_history()
 
 add_routes(app, chain, path="/api")
 

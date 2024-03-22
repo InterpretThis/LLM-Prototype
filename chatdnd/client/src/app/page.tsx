@@ -12,6 +12,12 @@ export default function Home() {
   );
 }
 
+function isStatusCode(
+  chunk: unknown
+): chunk is { message: string; status_code: number } {
+  return typeof chunk === "object" && chunk !== null && "status_code" in chunk;
+}
+
 function isAnswer(chunk: unknown): chunk is { answer: string } {
   return typeof chunk === "object" && chunk !== null && "answer" in chunk;
 }
@@ -21,20 +27,25 @@ function Main() {
 
   const messagesRef = useRef<HTMLDivElement>(null);
 
-  async function handleSubmit(query: string) {
-    if (query.trim() === "") {
+  async function handleSubmit(question: string) {
+    if (question.trim() === "") {
       return;
     }
 
-    createMessage("You", query);
+    createMessage("You", question);
 
     messagesRef.current?.scrollIntoView({ behavior: "smooth" });
 
     const id = createMessage("ChatDND");
 
-    const stream = await chain.stream(query);
+    // const stream = await chain.stream({ question });
+    const stream = await chain.stream(question);
 
     for await (const chunk of stream) {
+      if (isStatusCode(chunk) && chunk.status_code !== 200) {
+        appendToMessage(id, `An error occurred: ${chunk.message}`);
+      }
+
       if (isAnswer(chunk)) {
         appendToMessage(id, chunk.answer);
       }
