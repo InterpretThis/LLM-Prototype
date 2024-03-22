@@ -1,9 +1,18 @@
 """
-Retrieval-augmented generation with LangChain.
+Flask server for retrieval-augmented generation with LangChain.
 """
 
+from subprocess import Popen
+from sys import executable, stderr, stdout
+from typing import Literal
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from langchain.callbacks.manager import CallbackManager
+from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 from langchain_community.document_loaders.pdf import PyPDFLoader
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings.huggingface import HuggingFaceEmbeddings
+from langchain_community.llms.llamacpp import LlamaCpp
 from langchain_community.llms.llamafile import Llamafile
 from langchain_community.vectorstores.faiss import FAISS
 from langchain_core.documents import Document
@@ -11,6 +20,49 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough
 from langchain_text_splitters import CharacterTextSplitter
+from langserve import add_routes
+
+ModelType = Literal["llama-cpp", "llamafile"]
+
+
+def create_llm(
+    model_type: ModelType,
+    callback_manager: CallbackManager | None = None,
+):
+    """
+    Create a language model.
+    """
+
+    if model_type == "llama-cpp":
+        return LlamaCpp(  # type: ignore
+            model_path="gguf/mistral-7b-instruct-v0.1.Q2_K.gguf",
+            n_ctx=4096,
+            n_gpu_layers=1,
+            streaming=True,
+            callback_manager=callback_manager,
+            verbose=True,
+        )
+
+    if model_type == "llamafile":
+        name = "llamafile/llava-v1.5-7b-q4.llamafile"
+        # name = "llamafile/mistral-7b-instruct-v0.2.Q5_K_M.llamafile"
+        # name = "llamafile/TinyLlama-1.1B-Chat-v1.0.Q5_K_M.llamafile"
+
+        Popen(
+            executable=executable,
+            args=f"{name} --server --nobrowser",
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        return Llamafile(
+            name=name,
+            streaming=True,
+            callback_manager=callback_manager,
+            verbose=True,
+        )
+
+    raise ValueError(f"Invalid model type: {model_type}")
 
 
 def load_pdf(file_path: str):
@@ -52,7 +104,7 @@ def create_vectorstore():
     print("Creating vector-store...")
 
     return FAISS.from_documents(
-        CharacterTextSplitter(chunk_size=1024, chunk_overlap=256).split_documents(
+        CharacterTextSplitter(chunk_size=512, chunk_overlap=128).split_documents(
             load_documents()
         ),
         HuggingFaceEmbeddings(),
@@ -77,8 +129,11 @@ def create_rag_chain():
     print("Creating retriever...")
     retriever = vectorstore.as_retriever(search_type="similarity")
 
+    print("Creating LLM callback manager...")
+    callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
+
     print("Creating LLM...")
-    llm = Llamafile(streaming=True)
+    llm = create_llm("llamafile", callback_manager)
 
     prompt_template = ChatPromptTemplate.from_template(
         """You are an assistant for a Dungeons and Dragons (DnD) game.
@@ -104,3 +159,26 @@ def create_rag_chain():
     return RunnableParallel(
         {"context": retriever, "question": RunnablePassthrough()}
     ).assign(answer=rag_chain_from_docs)
+
+
+app = FastAPI()
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
+
+chain = create_rag_chain()
+
+add_routes(app, chain, path="/api")
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=7000)

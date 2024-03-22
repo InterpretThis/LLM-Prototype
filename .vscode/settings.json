@@ -13,6 +13,6 @@
   },
   "isort.args": ["--profile", "black"],
   "python.analysis.typeCheckingMode": "basic",
-  "python.defaultInterpreterPath": "${env:HOME}/miniconda3/envs/sharpness",
+  "python.defaultInterpreterPath": "${env:HOME}/miniconda3/envs/chatdnd",
   "python.terminal.activateEnvironment": true
 }
